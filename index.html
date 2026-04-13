@@ -1,0 +1,299 @@
+```html
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TERMINAL - MOBILE DECODER</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+        :root {
+            --glow-color: #00ff9d;
+            --bg-color: #050805;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--glow-color);
+            font-family: 'Share Tech Mono', monospace;
+            /* モバイルでのバウンススクロールを防止 */
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 走査線エフェクト (モバイル用に軽量化) */
+        .scanlines {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%);
+            background-size: 100% 4px;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        .terminal-container {
+            border: 1px solid var(--glow-color);
+            box-shadow: 0 0 15px rgba(0, 255, 157, 0.15);
+            background: rgba(0, 20, 10, 0.95);
+        }
+
+        .glow-text {
+            text-shadow: 0 0 5px var(--glow-color);
+        }
+
+        /* 入力エリアの調整 */
+        input {
+            background: transparent !important;
+            border: none !important;
+            border-bottom: 2px solid var(--glow-color) !important;
+            color: var(--glow-color) !important;
+            text-transform: uppercase;
+            border-radius: 0 !important;
+            font-size: 24px !important; /* iOSでズームされないための最小サイズ */
+        }
+
+        /* モバイル用押しやすいボタン */
+        .touch-button {
+            border: 1px solid var(--glow-color);
+            background: rgba(0, 255, 157, 0.05);
+            transition: all 0.2s;
+            touch-action: manipulation;
+        }
+
+        .touch-button:active {
+            background: var(--glow-color);
+            color: var(--bg-color);
+            box-shadow: 0 0 20px var(--glow-color);
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: var(--glow-color);
+            width: 0%;
+            box-shadow: 0 0 10px var(--glow-color);
+        }
+
+        .img-hint {
+            border: 1px solid var(--glow-color);
+            width: 100%;
+            height: auto;
+            max-height: 40vh;
+            object-fit: contain;
+        }
+
+        /* フェードイン */
+        .fade-in {
+            animation: fadeIn 0.4s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen items-center justify-start py-6 px-4">
+    <div class="scanlines"></div>
+
+    <div class="w-full max-w-lg z-10 flex flex-col flex-grow">
+        <!-- システムヘッダー -->
+        <div class="flex justify-between items-center mb-4 px-2 text-[10px] glow-text uppercase tracking-widest">
+            <span>Mobile-Term v5.0</span>
+            <span class="animate-pulse">● Connected</span>
+        </div>
+
+        <div class="terminal-container flex-grow flex flex-col rounded-lg overflow-hidden">
+            <!-- 端末上部の装飾 -->
+            <div class="bg-[#00ff9d]/10 px-4 py-1 text-[9px] border-b border-[#00ff9d]/20 flex gap-2">
+                <span class="opacity-50">STATUS: ACTIVE</span>
+                <span class="opacity-50">ENC: AES-256</span>
+            </div>
+
+            <!-- メインコンテンツ (スクロール可能) -->
+            <div class="flex-grow overflow-y-auto p-6 flex flex-col">
+                
+                <!-- 入力画面 -->
+                <div id="view-input" class="my-auto fade-in">
+                    <p class="text-xs mb-8 opacity-80 leading-relaxed">
+                        > 閲覧権限が必要です。<br>
+                        > 4文字から12文字のアクセスコードを入力してください。
+                    </p>
+                    
+                    <div class="mb-10 text-center">
+                        <input 
+                            type="text" 
+                            id="code-input" 
+                            class="w-full text-center tracking-[0.4em] font-bold py-3 mb-2 focus:outline-none"
+                            placeholder="CODE"
+                            maxlength="12"
+                            inputmode="text"
+                            autocomplete="off"
+                        >
+                        <p id="error-display" class="text-[10px] text-red-500 font-bold h-4 mt-2"></p>
+                    </div>
+
+                    <button 
+                        onclick="handleAnalysis()"
+                        class="touch-button w-full py-5 text-lg font-bold tracking-[0.2em] rounded-md"
+                    >
+                        ANALYZE
+                    </button>
+                </div>
+
+                <!-- ローディング画面 -->
+                <div id="view-loading" class="hidden my-auto py-10 fade-in">
+                    <div class="text-center">
+                        <p class="mb-6 glow-text text-sm">DECRYPTING...</p>
+                        <div class="w-full bg-white/5 h-2 rounded-full mb-4">
+                            <div id="bar-fill" class="progress-bar"></div>
+                        </div>
+                        <p id="status-text" class="text-[9px] opacity-40 uppercase tracking-tighter">Requesting data...</p>
+                    </div>
+                </div>
+
+                <!-- ヒント表示画面 -->
+                <div id="view-result" class="hidden fade-in">
+                    <div class="border-b border-[#00ff9d]/30 pb-3 mb-5">
+                        <span class="text-[10px] opacity-50 block mb-1">DECRYPTED DATA:</span>
+                        <h2 id="result-title" class="text-xl font-bold glow-text">FILE_NAME</h2>
+                    </div>
+
+                    <div id="image-area" class="mb-5 hidden">
+                        <img id="hint-img" src="" alt="Hint" class="img-hint">
+                    </div>
+
+                    <div class="p-4 bg-white/5 border-l-2 border-[#00ff9d] mb-8">
+                        <p id="result-text" class="text-sm leading-relaxed text-white/90"></p>
+                    </div>
+
+                    <button 
+                        onclick="resetSystem()"
+                        class="w-full py-4 text-xs border border-white/20 opacity-60 hover:opacity-100 rounded"
+                    >
+                        CLOSE SESSION
+                    </button>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- フッター -->
+        <div class="mt-4 flex justify-between px-2 text-[9px] opacity-30">
+            <span>SYS_ID: NOD-772</span>
+            <span>USER: GUEST_01</span>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 【ヒントデータの追加】
+         */
+        const HINT_DATA = [
+            {
+                pass: "OPEN",
+                title: "扉の構造図",
+                text: "この扉は物理的な鍵ではなく、電子的なロックで制御されている。制御盤は通路の突き当たりにある。",
+                image: "https://images.unsplash.com/photo-1517646331032-9e8563c520a1?auto=format&fit=crop&q=80&w=800"
+            },
+            {
+                pass: "NOTE",
+                title: "研究員のメモ",
+                text: "『3回目のベルが鳴る前に、青いボタンを2回、赤いボタンを1回押せ。』という走り書きがある。",
+                image: null
+            },
+            {
+                pass: "1031",
+                title: "機密写真 A-02",
+                text: "棚の裏に隠されていた写真。そこには金庫の正しいダイヤル位置が写っているようだ。",
+                image: "https://images.unsplash.com/photo-1614850523296-d8c1af93d400?auto=format&fit=crop&q=80&w=800"
+            }
+        ];
+
+        const codeInput = document.getElementById('code-input');
+        const errorDisplay = document.getElementById('error-display');
+        const barFill = document.getElementById('bar-fill');
+        const statusText = document.getElementById('status-text');
+
+        // 入力の制御（大文字固定・英数字のみ）
+        codeInput.addEventListener('input', (e) => {
+            let start = e.target.selectionStart;
+            let end = e.target.selectionEnd;
+            e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+            e.target.setSelectionRange(start, end);
+            errorDisplay.innerText = "";
+        });
+
+        function handleAnalysis() {
+            const val = codeInput.value.trim();
+            if (!val) return;
+
+            // キーボードを閉じる (モバイル対策)
+            codeInput.blur();
+
+            const found = HINT_DATA.find(h => h.pass === val);
+
+            if (found) {
+                errorDisplay.innerText = "";
+                startLoading(found);
+            } else {
+                errorDisplay.innerText = "ACCESS DENIED: INVALID KEY";
+                // 軽いバイブレーション演出（端末が対応していれば）
+                if (window.navigator.vibrate) window.navigator.vibrate(50);
+            }
+        }
+
+        function startLoading(data) {
+            document.getElementById('view-input').classList.add('hidden');
+            document.getElementById('view-loading').classList.remove('hidden');
+            
+            let progress = 0;
+            const steps = ["Establishing link...", "Downloading packets...", "Finalizing..."];
+            
+            const timer = setInterval(() => {
+                progress += Math.floor(Math.random() * 20) + 5;
+                if (progress >= 100) {
+                    progress = 100;
+                    clearInterval(timer);
+                    setTimeout(() => showResult(data), 400);
+                }
+                barFill.style.width = progress + "%";
+                statusText.innerText = steps[Math.floor((progress/101) * steps.length)];
+            }, 100);
+        }
+
+        function showResult(data) {
+            document.getElementById('view-loading').classList.add('hidden');
+            document.getElementById('view-result').classList.remove('hidden');
+
+            document.getElementById('result-title').innerText = data.title;
+            document.getElementById('result-text').innerText = data.text;
+            
+            const imgArea = document.getElementById('image-area');
+            const imgEl = document.getElementById('hint-img');
+            
+            if (data.image) {
+                imgArea.classList.remove('hidden');
+                imgEl.src = data.image;
+            } else {
+                imgArea.classList.add('hidden');
+            }
+        }
+
+        function resetSystem() {
+            document.getElementById('view-result').classList.add('hidden');
+            document.getElementById('view-input').classList.remove('hidden');
+            codeInput.value = "";
+            barFill.style.width = "0%";
+            setTimeout(() => codeInput.focus(), 100);
+        }
+
+        // Enterキー
+        codeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleAnalysis();
+        });
+    </script>
+</body>
+</html>
+
+```
